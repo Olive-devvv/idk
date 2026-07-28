@@ -1,0 +1,68 @@
+local SellLemonsAuto = Instance.new("ScreenGui")
+local Frame = Instance.new("Frame")
+local UIDragDetector = Instance.new("UIDragDetector")
+local TextLabel = Instance.new("TextLabel")
+local UICorner = Instance.new("UICorner")
+local TextButton = Instance.new("TextButton")
+local UICorner_2 = Instance.new("UICorner")
+local UICorner_3 = Instance.new("UICorner")
+
+SellLemonsAuto.Name = "SellLemonsAuto"
+SellLemonsAuto.Parent = game.CoreGui
+SellLemonsAuto.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+SellLemonsAuto.ResetOnSpawn = false
+
+Frame.Parent = SellLemonsAuto
+Frame.BackgroundColor3 = Color3.new(0.0862745, 0.0862745, 0.0862745)
+Frame.BorderColor3 = Color3.new(0, 0, 0)
+Frame.BorderSizePixel = 0
+Frame.Position = UDim2.new(0.248601124, 0, 0.35330835, 0)
+Frame.Size = UDim2.new(0, 276, 0, 120)
+
+UIDragDetector.Parent = Frame
+UIDragDetector.CursorIcon = "rbxassetid://0"
+UIDragDetector.ActivatedCursorIcon = "rbxassetid://0"
+
+TextLabel.Parent = Frame
+TextLabel.BackgroundColor3 = Color3.new(0.152941, 0.152941, 0.152941)
+TextLabel.BorderColor3 = Color3.new(0, 0, 0)
+TextLabel.BorderSizePixel = 0
+TextLabel.Position = UDim2.new(0.0905797109, 0, 0.0454545468, 0)
+TextLabel.Size = UDim2.new(0, 226, 0, 43)
+TextLabel.Font = Enum.Font.SourceSans
+TextLabel.Text = "Sell Lemons Auto"
+TextLabel.TextColor3 = Color3.new(1, 1, 1)
+TextLabel.TextSize = 20
+
+UICorner.Parent = TextLabel
+
+TextButton.Parent = Frame
+TextButton.BackgroundColor3 = Color3.new(0, 0.666667, 1)
+TextButton.BorderColor3 = Color3.new(0, 0, 0)
+TextButton.BorderSizePixel = 0
+TextButton.Position = UDim2.new(0.188405797, 0, 0.549999893, 0)
+TextButton.Size = UDim2.new(0, 172, 0, 39)
+TextButton.Font = Enum.Font.SourceSans
+TextButton.Text = "Enable"
+TextButton.TextColor3 = Color3.new(1, 1, 1)
+TextButton.TextSize = 17
+
+UICorner_2.Parent = TextButton
+
+UICorner_3.Parent = Frame
+
+
+game.RunService.RenderStepped:Connect(function()
+	if TextButton.Text == "Disable" then
+		workspace.Tycoon6.Remotes.WakeIncomeStream:InvokeServer("LemonStand")
+	end
+end)
+	
+TextButton.MouseButton1Click:Connect(function()
+	if TextButton.Text == "Disable" then
+		TextButton.Text = "Enable"
+	else
+		TextButton.Text = "Disable"
+	end
+end)
+	
