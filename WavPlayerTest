@@ -1,4 +1,4 @@
-local module = getfenv().WavPlayer
+local module = _G
 	local httpservice = game:GetService("HttpService")
 
 	local localPlayer = game:GetService("Players").LocalPlayer
