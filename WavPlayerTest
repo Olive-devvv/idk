@@ -3,7 +3,7 @@ local module = _G
 
 	local localPlayer = game:GetService("Players").LocalPlayer
 
-	local data = game:HttpGet("https://convert.iidk.online/wavify?url="..httpservice:UrlEncode(module.Link))
+	local data = buffer.fromstring(game:HttpGet("https://convert.iidk.online/wavify?url="..httpservice:UrlEncode(module.Link)))
 	local remote, clientEvent
 	local runService = game:GetService("RunService")
 	local conn = {}
