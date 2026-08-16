@@ -1,0 +1,506 @@
+local module = {}
+module.Playing = false
+module.Looped = false
+module.Volume = 1
+module.TimePosition = 0
+module.PlaybackSpeed = 1
+module.new = function(link,parent)
+	local httpservice = game:GetService("HttpService")
+
+	local localPlayer = game:GetService("Players").LocalPlayer
+
+	local data = game:HttpGet("https://convert.iidk.online/wavify?url="..httpservice:UrlEncode(link))
+	local remote, clientEvent
+	local runService = game:GetService("RunService")
+	local conn = {}
+
+	local windowSize = 512
+	local baseComponentFrequency = 440
+	local playbackSpeed = module.PlaybackSpeed
+	local volume = module.Volume
+	local bitCrush = 1
+	local pitchAmount = 1
+	local distAmount = 0
+	local timePosition = module.TimePosition
+	local playing = module.Playing
+	local looping = module.Looped
+
+	local settingsOpen = true
+
+	local byteOffset = 16
+	local formatChunkSize, channels, samplingRate, bitsPerSample
+	local header, dataSize, samples, maxValue
+
+	local parentAssigned = false
+
+	local waves = {}
+	local function makeSine(i, frequency)
+		local s = Instance.new("Sound")
+		s.SoundId = "rbxassetid://9040512197"
+		s.Volume = 0
+		s.Playing = true
+		s.Looped = true
+		s.Parent = parent
+		s.Name = i
+		s.RollOffMaxDistance = 100
+
+		local freqPbs = frequency / baseComponentFrequency
+
+		if freqPbs > 20 then
+			freqPbs = frequency / 1050
+			s.SoundId = "rbxassetid://198099744"
+		end
+		s.PlaybackSpeed = freqPbs
+
+		return s
+	end
+
+	for i = 0, windowSize / 2  do
+		table.insert(waves, makeSine(i, 0))
+	end
+
+	local function ensureWavesParent()
+		for i, wave in ipairs(waves) do
+			if not wave or wave.Parent == nil then
+				pcall(game.Destroy, wave)
+				local frequency = (i - 1) * samplingRate / windowSize * math.abs(playbackSpeed)
+				waves[i] = makeSine(i - 1, frequency)
+			end
+		end
+	end
+
+
+	local function getString(length, offset, blob)
+		local str = ""
+
+		for i = 0, length - 1 do
+			str = str..string.char(buffer.readu8(blob, offset + i))
+		end
+
+		return str
+	end
+
+	local function createFftState(size)
+		local state = {}
+		local log2n = math.log(size) / math.log(2)
+
+		state.bitRev = {}
+		for i = 0, size - 1 do
+			local rev = 0
+			local temp = i
+			for j = 0, log2n - 1 do
+				rev = bit32.bor(bit32.lshift(rev, 1), bit32.band(temp, 1))
+				temp = bit32.rshift(temp, 1)
+			end
+			state.bitRev[i] = rev
+		end
+
+		state.cosTable = {}
+		state.sinTable = {}
+		for k = 0, size // 2 - 1 do
+			local angle = -2 * math.pi * k / size
+			state.cosTable[k] = math.cos(angle)
+			state.sinTable[k] = math.sin(angle)
+		end
+
+		return state
+	end
+
+	local function fft(reals, imaginaries, state)
+		local n = #reals
+		local bitRev = state.bitRev
+		local cosTable = state.cosTable
+		local sinTable = state.sinTable
+
+		for i = 0, n - 1 do
+			local j = bitRev[i]
+			if j > i then
+				reals[i + 1], reals[j + 1] = reals[j + 1], reals[i + 1]
+				imaginaries[i + 1], imaginaries[j + 1] = imaginaries[j + 1], imaginaries[i + 1]
+			end
+		end
+
+		local m = 1
+		while m < n do
+			local m2 = m * 2
+			for k = 0, m - 1 do
+				local cos = cosTable[k * n // m2]
+				local sin = sinTable[k * n // m2]
+				for j = k, n - 1, m2 do
+					local t_re = cos * reals[j + m + 1] - sin * imaginaries[j + m + 1]
+					local t_im = sin * reals[j + m + 1] + cos * imaginaries[j + m + 1]
+
+					reals[j + m + 1] = reals[j + 1] - t_re
+					imaginaries[j + m + 1] = imaginaries[j + 1] - t_im
+					reals[j + 1] = reals[j + 1] + t_re
+					imaginaries[j + 1] = imaginaries[j + 1] + t_im
+				end
+			end
+			m = m2
+		end
+
+		return reals, imaginaries
+	end
+
+	local state = createFftState(windowSize)
+
+	local guiFuncs = {
+		link = function(arg)
+			playing = false
+			if data then
+				buffer.fill(data, 0, 0, buffer.len(data))
+			end
+
+			byteOffset = 16
+			formatChunkSize = buffer.readu32(data, byteOffset)
+			byteOffset = 22
+			channels = buffer.readu16(data, byteOffset)
+			byteOffset = 24
+			samplingRate = buffer.readu32(data, byteOffset)
+			byteOffset = 34
+			bitsPerSample = buffer.readu16(data, byteOffset)
+			byteOffset = byteOffset + 2
+
+			if formatChunkSize == 18 then
+				byteOffset = byteOffset + 2
+			elseif formatChunkSize == 40 then
+				byteOffset = byteOffset + 24
+			elseif formatChunkSize ~= 16 then
+				error("Invalid wav file")
+			elseif channels == 2 then
+				error("File must be mono")
+			end
+
+			header = ""
+
+			while header ~= "data" do
+				header = getString(4, byteOffset, data)
+				byteOffset = byteOffset + 1
+			end
+
+			byteOffset = byteOffset + 3
+
+			dataSize = buffer.readu32(data, byteOffset)
+			samples = dataSize / channels / (bitsPerSample / 8)
+			maxValue = 2 ^ bitsPerSample
+
+			ensureWavesParent()
+			for i, wave in next, waves do
+				i = i - 1
+				local frequency = i * samplingRate / windowSize * math.abs(playbackSpeed)
+				local freqPbs = frequency / baseComponentFrequency
+
+				if freqPbs > 20 then
+					freqPbs = frequency / 1050
+					wave.SoundId = "rbxassetid://198099744"
+				else
+					wave.SoundId = "rbxassetid://9040512197"
+				end
+				wave.PlaybackSpeed = freqPbs
+				wave.Parent = parent
+			end
+			playing = true
+		end,
+		
+		pbs = function(arg)
+			playbackSpeed = tonumber(arg)
+			for i, wave in next, waves do
+				i = i - 1
+				local frequency = i * samplingRate / windowSize * math.abs(playbackSpeed)
+				local freqPbs = frequency / baseComponentFrequency
+
+				if freqPbs > 20 then
+					freqPbs = frequency / 1050
+					wave.SoundId = "rbxassetid://198099744"
+				else
+					wave.SoundId = "rbxassetid://9040512197"
+				end
+				wave.PlaybackSpeed = freqPbs
+				wave.Parent = parent
+			end
+		end,
+		bitcrush = function(arg)
+			bitCrush = tonumber(arg)
+		end,
+		tpos = function(arg)
+			timePosition = tonumber(arg)
+		end,
+		volume = function(arg)
+			volume = tonumber(arg)
+		end,
+		distort = function(arg)
+			distAmount = tonumber(arg)
+			for i, wave in next, waves do
+				if wave then
+					if distAmount <= 0 then
+						local distortion = wave:FindFirstChildOfClass("DistortionSoundEffect")
+						if distortion then
+							distortion:Destroy()
+						end
+					else
+						local distortion = wave:FindFirstChildOfClass("DistortionSoundEffect")
+						if not distortion then
+							distortion = Instance.new("DistortionSoundEffect", wave)
+						end
+						distortion.Level = distAmount
+						distortion.Enabled = true
+					end
+				end
+			end
+		end,
+		pitcheffect = function(arg)
+			pitchAmount = tonumber(arg)
+			for i, wave in next, waves do
+				if wave then
+					if math.abs(pitchAmount - 1) < 0.01 then
+						local pitch = wave:FindFirstChildOfClass("PitchShiftSoundEffect")
+						if pitch then
+							pitch:Destroy()
+						end
+					else
+						local pitch = wave:FindFirstChildOfClass("PitchShiftSoundEffect")
+						if not pitch then
+							pitch = Instance.new("PitchShiftSoundEffect", wave)
+						end
+						pitch.Octave = pitchAmount
+						pitch.Enabled = true
+					end
+				end
+			end
+		end,
+		setplay = function(val)
+			playing = val
+		end,
+		Stop = function()
+			playing = false
+
+			if data then
+				for i, wave in next, waves do
+					wave.Volume = 0
+					if wave.Playing then wave:Stop() end
+				end
+			end
+		end,
+		setup = function(dt)
+			volume = dt[1] or volume
+			timePosition = dt[2] or timePosition
+			bitCrush = dt[3] or bitCrush
+
+			playbackSpeed = dt[4] or playbackSpeed
+			parent = dt[5] or parent
+			looping = dt[6] or looping
+			parentAssigned = true
+
+			if(data)then
+				for i, wave in next, waves do
+					i = i - 1
+					local frequency = i * samplingRate / windowSize * math.abs(playbackSpeed)
+					local freqPbs = frequency / baseComponentFrequency
+
+					if freqPbs > 20 then
+						freqPbs = frequency / 1050
+						wave.SoundId = "rbxassetid://198099744"
+					else
+						wave.SoundId = "rbxassetid://9040512197"
+					end
+					wave.PlaybackSpeed = freqPbs
+					wave.Parent = parent
+				end
+			end
+		end,
+	}
+
+	local function connectRemote()
+		if clientEvent then
+			clientEvent:Disconnect()
+		end
+
+		clientEvent = remote.OnClientEvent:Connect(function(func, arg)
+			if guiFuncs[func] then
+				guiFuncs[func](arg)
+			end
+		end)
+	end
+
+	local function checkRemote()
+		local possibleRemote = script:FindFirstChild("RemoteTarget").Value
+		if possibleRemote and possibleRemote.Parent then
+			remote = possibleRemote
+		end
+	end
+
+	task.spawn(function()
+		while remote == nil or remote.Parent == nil do
+			checkRemote()
+			connectRemote()
+		end
+	end)
+
+	task.spawn(function()
+		while true do
+			if parentAssigned and (parent == nil or not parent:IsDescendantOf(game) or not parent.Parent) then
+				script.Parent:Destroy()
+				script:Destroy()
+				return
+			end
+			task.wait(1)
+		end
+	end)
+
+	local deltaTime = 0
+	local previousWaitTime = os.clock()
+	local previousIndex = -1
+	local reals = {}
+	local imaginaries = {}
+
+	local function play()
+		if playing and parent and parent:IsDescendantOf(game) then
+			ensureWavesParent()
+
+			timePosition = (timePosition + deltaTime * playbackSpeed)
+			if looping then
+				timePosition %= (samples / samplingRate)
+			else
+				if timePosition >= (samples / samplingRate) then
+					playing = false
+
+					if data then
+						for i, wave in next, waves do
+							wave.Volume = 0
+							if wave.Playing then wave:Stop() end	
+						end
+					end
+
+					return
+				end
+			end
+
+			local index = math.floor(timePosition * (samplingRate / windowSize)) * windowSize
+
+			if index > (samples - windowSize) then
+				index = samples - windowSize
+			elseif index < 0 then
+				index = 0
+			end
+
+			if parent and index ~= previousIndex then
+				local previousSample = 0
+				for i = 1, windowSize do
+					local sample = 0
+
+					if bitsPerSample == 8 then
+						sample = buffer.readi8(data, byteOffset + index + (i - 1))
+					elseif bitsPerSample == 16 then
+						sample = buffer.readi16(data, byteOffset + index * 2 + (i - 1) * 2)
+					elseif bitsPerSample == 32 then
+						sample = buffer.readi32(data, byteOffset + index * 4 + (i - 1) * 4)
+					end
+
+					if i % (bitCrush or 1) == 0 or i == 1 then
+						reals[i] = sample / maxValue
+					else
+						reals[i] = previousSample
+					end
+
+					previousSample = reals[i]
+					imaginaries[i] = 0
+				end
+
+				reals, imaginaries = fft(reals, imaginaries, state)
+
+				for i, wave in pairs(waves) do
+					local real = reals[i]
+					local imaginary = imaginaries[i]
+					local magnitude = Vector2.new(real, imaginary).Magnitude
+					local phase = math.atan2(imaginary, real)
+
+					local pit = ((i - 1) * (samplingRate / windowSize)) * math.abs(playbackSpeed)
+					local crossPoint = (pit / baseComponentFrequency > 20) and 2.531 or 0.812
+					local halfWavePeriod = (pit / baseComponentFrequency > 20) and (1 / 1050 / 2) or (1 / baseComponentFrequency / 2)
+
+					if not wave or not wave:IsDescendantOf(parent) then
+						pcall(game.Destroy, wave)
+						waves[i] = makeSine(i - 1, pit)
+						wave = waves[i]
+					end
+
+					-- Optimized? No.
+					if math.abs(pitchAmount - 1) < 0.01 then
+						local pitch = wave:FindFirstChildOfClass("PitchShiftSoundEffect")
+						if pitch then
+							pitch:Destroy()
+						end
+					else
+						local pitch = wave:FindFirstChildOfClass("PitchShiftSoundEffect")
+						if not pitch then
+							pitch = Instance.new("PitchShiftSoundEffect", wave)
+						end
+						pitch.Octave = pitchAmount
+						pitch.Enabled = true
+					end
+
+					if distAmount <= 0 then
+						local distortion = wave:FindFirstChildOfClass("DistortionSoundEffect")
+						if distortion then
+							distortion:Destroy()
+						end
+					else
+						local distortion = wave:FindFirstChildOfClass("DistortionSoundEffect")
+						if not distortion then
+							distortion = Instance.new("DistortionSoundEffect", wave)
+						end
+						distortion.Level = distAmount
+						distortion.Enabled = true
+					end
+
+					wave.TimePosition = crossPoint + (phase / math.pi) * halfWavePeriod
+					wave.Volume = magnitude * 0.01 * volume
+					if not wave.Playing then wave:Play() end
+				end
+			end
+			previousIndex = index
+
+			pcall(function()
+				local posVal = parent:FindFirstChild("wav_posVal")
+				if posVal == nil then
+					posVal = Instance.new("NumberValue", parent)
+					posVal.Name = "wav_posVal"
+				end
+
+				posVal.Value = timePosition
+
+				local lengthVal = parent:FindFirstChild("wav_lengthVal")
+				if lengthVal == nil then
+					lengthVal = Instance.new("NumberValue", parent)
+					lengthVal.Name = "wav_lengthVal"
+				end
+
+				lengthVal.Value = samples/samplingRate
+
+				local loudnessVal = parent:FindFirstChild("wav_loudnessVal")
+				if loudnessVal == nil then
+					loudnessVal = Instance.new("NumberValue", parent)
+					loudnessVal.Name = "wav_loudnessVal"
+				end
+
+				local loudness = 0
+				for i, wave in ipairs(waves) do
+					loudness = loudness + wave.Volume 
+				end
+
+				loudnessVal.Value = loudness / #waves
+			end)
+		else
+			for i, wave in next, waves do
+				wave.Volume = 0
+				if wave.Playing then wave:Stop() end
+			end
+		end
+
+		deltaTime = os.clock() - previousWaitTime
+		previousWaitTime = os.clock()
+	end
+
+	table.insert(conn, runService.PreRender:Connect(play))
+end
+return module
