@@ -1,4 +1,4 @@
-local module = _G
+local module = getfenv().WavPlayer
 	local httpservice = game:GetService("HttpService")
 
 	local localPlayer = game:GetService("Players").LocalPlayer
@@ -13,8 +13,8 @@ local module = _G
 	local playbackSpeed = module.PlaybackSpeed
 	local volume = module.Volume
 	local bitCrush = 1
-	local pitchAmount = 1
-	local distAmount = 0
+	local pitchAmount = module.Pitch
+	local distAmount = module.Distortion
 	local timePosition = module.TimePosition
 	local playing = module.Playing
 	local looping = module.Looped
@@ -196,8 +196,7 @@ local module = _G
 			playing = true
 		end,
 
-		pbs = function(arg)
-			playbackSpeed = tonumber(arg)
+		pbs = function()
 			for i, wave in next, waves do
 				i = i - 1
 				local frequency = i * samplingRate / windowSize * math.abs(playbackSpeed)
@@ -213,17 +212,7 @@ local module = _G
 				wave.Parent = parent
 			end
 		end,
-		bitcrush = function(arg)
-			bitCrush = tonumber(arg)
-		end,
-		tpos = function(arg)
-			timePosition = tonumber(arg)
-		end,
-		volume = function(arg)
-			volume = tonumber(arg)
-		end,
-		distort = function(arg)
-			distAmount = tonumber(arg)
+		distort = function()
 			for i, wave in next, waves do
 				if wave then
 					if distAmount <= 0 then
@@ -242,8 +231,7 @@ local module = _G
 				end
 			end
 		end,
-		pitcheffect = function(arg)
-			pitchAmount = tonumber(arg)
+		pitcheffect = function()
 			for i, wave in next, waves do
 				if wave then
 					if math.abs(pitchAmount - 1) < 0.01 then
@@ -276,13 +264,13 @@ local module = _G
 			end
 		end,
 		setup = function(dt)
-			volume = dt[1] or volume
-			timePosition = dt[2] or timePosition
-			bitCrush = dt[3] or bitCrush
+			volume = volume
+			timePosition = timePosition
+			bitCrush = bitCrush
 
-			playbackSpeed = dt[4] or playbackSpeed
-			parent = dt[5] or parent
-			looping = dt[6] or looping
+			playbackSpeed = playbackSpeed
+			parent = parent
+			looping = looping
 			parentAssigned = true
 
 			if(data)then
@@ -304,31 +292,14 @@ local module = _G
 		end,
 	}
 
-	local function connectRemote()
-		if clientEvent then
-			clientEvent:Disconnect()
-		end
-
-		clientEvent = remote.OnClientEvent:Connect(function(func, arg)
-			if guiFuncs[func] then
-				guiFuncs[func](arg)
-			end
-		end)
+    local function UseFuncs()
+	   if playing == true then
+		guiFuncs["setup"]()
+	    end
+	guiFuncs["pbs"]()
+	guiFuncs["distort"]()
+	guiFuncs["pitcheffect"]()
 	end
-
-	local function checkRemote()
-		local possibleRemote = script:FindFirstChild("RemoteTarget").Value
-		if possibleRemote and possibleRemote.Parent then
-			remote = possibleRemote
-		end
-	end
-
-	task.spawn(function()
-		while remote == nil or remote.Parent == nil do
-			checkRemote()
-			connectRemote()
-		end
-	end)
 
 	task.spawn(function()
 		while true do
@@ -495,4 +466,5 @@ local module = _G
 		previousWaitTime = os.clock()
 	end
 
+    UseFuncs()
 	table.insert(conn, runService.PreRender:Connect(play))
